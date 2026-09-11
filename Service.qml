@@ -864,7 +864,7 @@ Item {
     onExited: function(exitCode) {
       if (token !== root.liveToken) {
         root.syncing = false
-        root.snapshotTimeout.stop()
+        snapshotTimeout.stop()
         root.runPendingSnapshot()
         return
       }
