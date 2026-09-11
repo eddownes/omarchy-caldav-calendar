@@ -36,9 +36,12 @@ def control(base: str, payload: dict) -> None:
         response.read()
 
 
-def start_server() -> tuple[subprocess.Popen, str]:
+def start_server(fastmail_like: bool = False) -> tuple[subprocess.Popen, str]:
+    args = [sys.executable, str(ROOT / "test" / "fake-caldav.py"), "--user", USER, "--password", PASSWORD]
+    if fastmail_like:
+        args.append("--fastmail-like")
     proc = subprocess.Popen(
-        [sys.executable, str(ROOT / "test" / "fake-caldav.py"), "--user", USER, "--password", PASSWORD],
+        args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -101,6 +104,23 @@ def run() -> int:
         check("discover finds both calendars", names == ["Personal", "Work"], str(names))
         work = next(item for item in found if item["name"] == "Work")
         personal = next(item for item in found if item["name"] == "Personal")
+
+        fm_proc, fm_base = start_server(fastmail_like=True)
+        try:
+            time.sleep(0.05)
+            fm_found = mod.discover_caldav_calendars(fm_base + "/", USER, PASSWORD)
+            fm_names = sorted(item["name"] for item in fm_found)
+            check(
+                "discover follows the well-known redirect like Fastmail",
+                fm_names == ["Personal", "Work"],
+                str(fm_names),
+            )
+        finally:
+            fm_proc.terminate()
+            try:
+                fm_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                fm_proc.kill()
 
         token, changed, removed, truncated = report(mod, work["href"])
         check("first fill is not truncated", truncated is False)

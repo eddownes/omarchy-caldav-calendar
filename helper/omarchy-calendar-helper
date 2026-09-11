@@ -930,8 +930,50 @@ def caldav_propfind(url: str, username: str, password: str, timeout: float = 8.0
         raise ValueError("Could not reach that CalDAV server.") from error
 
 
+def caldav_well_known_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}/.well-known/caldav"
+
+
+def resolve_well_known_redirect(status: int, headers, well_known_url: str, original_url: str) -> str:
+    """RFC 6764: a bare CalDAV address (Fastmail's caldav.fastmail.com among
+    others) answers a direct PROPFIND with a plain 404, and only
+    /.well-known/caldav on the same host redirects to where the service
+    actually lives. Trusted back only onto the account's own origin, the same
+    rule discovery already holds every server-supplied home-set or principal
+    href to."""
+    if status < 300 or status >= 400 or headers is None:
+        return ""
+    location = headers.get("Location") or ""
+    if not location:
+        return ""
+    resolved = urljoin(well_known_url, location)
+    original = urlsplit(original_url)
+    target = urlsplit(resolved)
+    if target.hostname != original.hostname or target.scheme != original.scheme:
+        return ""
+    return resolved
+
+
+def caldav_well_known_candidate(url: str, username: str, password: str) -> str:
+    well_known = caldav_well_known_url(url)
+    if not well_known:
+        return ""
+    status, _body, headers = caldav_http(
+        "PROPFIND", well_known, username, password, PROPFIND_BODY,
+        {"Depth": "0", "Content-Type": "application/xml; charset=utf-8"},
+    )
+    return resolve_well_known_redirect(status, headers, well_known, url)
+
+
 def discover_caldav_calendars(url: str, username: str, password: str) -> list[dict]:
     pending = caldav_candidate_urls(url, username)
+    if (urlsplit(url).path or "") in ("", "/"):
+        well_known = caldav_well_known_candidate(url, username, password)
+        if well_known and well_known not in pending:
+            pending.insert(0, well_known)
     seen: set[str] = set()
     found: list[dict] = []
     while pending and len(seen) < 4:

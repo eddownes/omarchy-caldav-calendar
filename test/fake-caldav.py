@@ -195,12 +195,26 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, b'{"ok":true}', "application/json")
 
     def do_PROPFIND(self) -> None:
+        path = urlparse(self.path).path.rstrip("/") or "/"
+        if path == "/.well-known/caldav":
+            if self.server.fastmail_like:
+                self.send_response(301)
+                self.send_header("Location", "/dav/user/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self._send(404, b"")
+            return
         if self._need_auth():
             return
-        path = urlparse(self.path).path.rstrip("/") or "/"
         store = self._store()
         with store.lock:
             token = store.token_href()
+            if self.server.fastmail_like and path == "/":
+                # Fastmail answers a bare-address PROPFIND with a plain 404;
+                # only /.well-known/caldav says where the service lives.
+                self._send(404, b"")
+                return
             if path in ("/", "/dav", "/dav/user"):
                 if path == "/":
                     body = f"""<?xml version="1.0"?>
@@ -338,11 +352,13 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--user", default="tester")
     parser.add_argument("--password", default="secret")
+    parser.add_argument("--fastmail-like", action="store_true")
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.store = Store()
     server.username = args.user
     server.password = args.password
+    server.fastmail_like = args.fastmail_like
     print(server.server_address[1], flush=True)
     server.serve_forever()
     return 0

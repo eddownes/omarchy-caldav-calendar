@@ -190,6 +190,33 @@ print("ok - helper forwardemail propfind parse")' "$ROOT/helper/omarchy-calendar
 
 python3 -c 'from importlib.machinery import SourceFileLoader; import sys
 mod = SourceFileLoader("omarchy_calendar_helper", sys.argv[1]).load_module()
+assert mod.caldav_well_known_url("https://caldav.fastmail.com/") == "https://caldav.fastmail.com/.well-known/caldav"
+assert mod.caldav_well_known_url("not-a-url") == ""
+
+class Headers(dict):
+    def get(self, key, default=None):
+        return dict.get(self, key, default)
+
+# Fastmail answers a bare PROPFIND with a 301 to the real service.
+redirect = Headers({"Location": "https://caldav.fastmail.com/dav/calendars"})
+assert mod.resolve_well_known_redirect(301, redirect, "https://caldav.fastmail.com/.well-known/caldav", "https://caldav.fastmail.com/") == "https://caldav.fastmail.com/dav/calendars"
+
+# A relative Location resolves against the well-known URL itself.
+relative = Headers({"Location": "/dav/calendars"})
+assert mod.resolve_well_known_redirect(302, relative, "https://caldav.fastmail.com/.well-known/caldav", "https://caldav.fastmail.com/") == "https://caldav.fastmail.com/dav/calendars"
+
+# A redirect naming a different host is refused, the same as any other discovered href.
+cross_origin = Headers({"Location": "https://evil.example/dav/calendars"})
+assert mod.resolve_well_known_redirect(301, cross_origin, "https://caldav.fastmail.com/.well-known/caldav", "https://caldav.fastmail.com/") == ""
+
+# No redirect at all (a direct 404, a 401, or a real 207) leaves nothing to follow.
+assert mod.resolve_well_known_redirect(404, Headers({}), "https://caldav.fastmail.com/.well-known/caldav", "https://caldav.fastmail.com/") == ""
+assert mod.resolve_well_known_redirect(207, Headers({}), "https://caldav.fastmail.com/.well-known/caldav", "https://caldav.fastmail.com/") == ""
+assert mod.resolve_well_known_redirect(301, None, "https://caldav.fastmail.com/.well-known/caldav", "https://caldav.fastmail.com/") == ""
+print("ok - helper well-known redirect resolve")' "$ROOT/helper/omarchy-calendar-helper"
+
+python3 -c 'from importlib.machinery import SourceFileLoader; import sys
+mod = SourceFileLoader("omarchy_calendar_helper", sys.argv[1]).load_module()
 probe = b"""<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop>
 <d:sync-token>http://example.com/ns/sync/1</d:sync-token>
 <d:supported-report-set><d:supported-report><d:report><d:sync-collection/></d:report></d:supported-report></d:supported-report-set>
