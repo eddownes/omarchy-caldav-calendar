@@ -1550,6 +1550,43 @@ Panel {
                   visible: root.viewMode !== "month"
                   width: parent.width
                 }
+
+                Rectangle {
+                  id: syncingOverlay
+                  visible: calendarService && calendarService.status === "loading"
+                  anchors.fill: parent
+                  z: 20
+                  radius: Style.cornerRadius
+                  color: Util.alpha(Color.popups.background, 0.6)
+
+                  Column {
+                    anchors.centerIn: parent
+                    spacing: Style.space(8)
+
+                    Text {
+                      id: syncingDot
+                      anchors.horizontalCenter: parent.horizontalCenter
+                      text: "●"
+                      color: Color.accent
+                      font.pixelSize: Style.font.body
+
+                      SequentialAnimation on opacity {
+                        running: syncingOverlay.visible
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 1.0; to: 0.25; duration: 700; easing.type: Easing.InOutQuad }
+                        NumberAnimation { from: 0.25; to: 1.0; duration: 700; easing.type: Easing.InOutQuad }
+                      }
+                    }
+
+                    Text {
+                      anchors.horizontalCenter: parent.horizontalCenter
+                      text: "Syncing calendars…"
+                      color: Color.foreground
+                      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                      font.pixelSize: Style.font.body
+                    }
+                  }
+                }
               }
               DayPanel {
                 id: dayPanel
