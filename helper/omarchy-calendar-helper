@@ -1612,6 +1612,38 @@ def eds_snapshot(start: datetime, end: datetime, include_events: bool = True, if
     window_end = max(end, datetime.now(UTC) + timedelta(days=400))
     seen_caldav = set()
 
+    def checkpoint() -> dict:
+        # Mid-run (not-yet-visited) calendars have contributed nothing to
+        # `calendars`/`events` yet this pass, so carry their last-known state
+        # forward from the pre-run disk snapshot. Otherwise a kill between
+        # checkpoints would wipe calendars this pass simply hasn't reached
+        # yet, rather than only losing the one being pulled at kill time.
+        processed_ids = {str((item or {}).get("id") or "") for item in calendars}
+        carried_calendars = [item for item in (cache.get("calendars") or []) if str((item or {}).get("id") or "") not in processed_ids]
+        carried_events = [item for item in (cache.get("events") or []) if str((item or {}).get("calendarId") or "") not in processed_ids]
+        checkpoint_calendars = calendars + carried_calendars
+        checkpoint_events = events + carried_events
+        if len(checkpoint_events) > MAX_EVENTS:
+            checkpoint_events = checkpoint_events[:MAX_EVENTS]
+        result = {
+            "ok": True,
+            "provider": "evolution-data-server",
+            "calendars": checkpoint_calendars,
+            "events": checkpoint_events,
+            "cached": False,
+            "range": {"start": iso(window_start), "end": iso(window_end)},
+            "syncState": sync_state_map(cache),
+        }
+        if errors:
+            result["warnings"] = errors
+        if include_events:
+            result["_modes"] = calendar_modes
+            result["_remote"] = remote_touches
+            result["_removed"] = cache.get("_removed") if isinstance(cache.get("_removed"), dict) else {}
+            result = adopt_newer_cache_events(result, start_rev, calendar_modes, remote_touches, start_state, result["_removed"])
+            write_cache(result)
+        return result
+
     for source in sources:
         if not registry.check_enabled(source):
             continue
@@ -1666,27 +1698,16 @@ def eds_snapshot(start: datetime, end: datetime, include_events: bool = True, if
             if not listed:
                 calendars.append(calendar)
             errors.append({"calendarId": calendar["id"], "code": "calendar-error", "message": str(error)})
+        finally:
+            # A slow calendar (many events, or a laggy server) can push a full
+            # pass past the panel's snapshotTimeout, which kills this process
+            # before it returns. Checkpoint after every source so already-synced
+            # calendars survive a mid-run kill instead of being silently dropped.
+            checkpoint()
 
     if len(events) > MAX_EVENTS:
         del events[MAX_EVENTS:]
-    payload = {
-        "ok": True,
-        "provider": "evolution-data-server",
-        "calendars": calendars,
-        "events": events,
-        "cached": False,
-        "range": {"start": iso(window_start), "end": iso(window_end)},
-        "syncState": sync_state_map(cache),
-    }
-    if errors:
-        payload["warnings"] = errors
-    if include_events:
-        payload["_modes"] = calendar_modes
-        payload["_remote"] = remote_touches
-        payload["_removed"] = cache.get("_removed") if isinstance(cache.get("_removed"), dict) else {}
-        payload = adopt_newer_cache_events(payload, start_rev, calendar_modes, remote_touches, start_state, payload["_removed"])
-        write_cache(payload)
-    return payload
+    return checkpoint()
 
 
 def parse_instant(value: str) -> datetime:

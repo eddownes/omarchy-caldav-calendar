@@ -1035,7 +1035,14 @@ Item {
 
   Timer {
     id: snapshotTimeout
-    interval: 60000
+    // A full pass refreshes every CalDAV calendar serially (~10-15s each over
+    // the network), so an account with several calendars (e.g. 6+ on
+    // Fastmail) can comfortably exceed 60s. The helper now checkpoints its
+    // cache after every calendar, so a kill here no longer loses already-
+    // synced calendars, but a timeout this short still guaranteed the last
+    // calendar(s) in sort order were killed before their first pull ever
+    // completed, every single cycle.
+    interval: 180000
     repeat: false
     onTriggered: {
       if (!snapshotProc.running) return
